@@ -1,28 +1,43 @@
-# SEAPATH CentOS Stream 9 - Automated Deployment Guide
-
+# SEAPATH RHEL 9 - Automated Deployment Guide
 
 This guide provides a workflow to build custom **SEAPATH ISOs** and deploy them on **Physical Servers (Bare Metal)** or **Virtual Machines (Libvirt)**.
 
 > **Note:** All scripts (`.sh`) and configuration files (`.xml`, `.ks`) mentioned in this guide are located in the root of this repository.
 
-
 ### Prerequisites
 
--   Download the **CentOS Stream 9 ISO** and place it in the root of this repository.
-    
-    -   Download from: [https://centos.org/download/#centos-stream-9](https://centos.org/download/#centos-stream-9)
-        
--   **Optional:** The default password for `root` and `virtu` is `toto`. To change it, edit `seapath_kickstart.ks` and replace the hashed passwords.
+- **RHEL 9 ISO:** Download the standard **RHEL 9 Binary DVD ISO** (e.g., `rhel-9.7-x86_64-dvd.iso`) and place it in the root of this repository.
+  - Download from: [Red Hat Customer Portal](https://access.redhat.com/downloads/content/479/ver=/rhel---9/9.7/x86_64/product-software)
+
+- **Red Hat Subscription:** To successfully install the packages, you must have an active Red Hat subscription. You will need your **Organization ID** and an **Activation Key**.
+
+- **SSH Public Keys:** Have your public SSH keys ready to be injected into the Kickstart file for passwordless access.
+
+- **Optional (Passwords):** The default password for `root`, `virtu`, and `ansible` users is `toto`. To change it, edit the `.ks` file and replace the hashed passwords.
 
 
 ## 1. Generating Custom ISOs
 
-In this phase, you will create **three unique ISOs** (one for each node). During this process, your host's SSH public key is automatically injected into the images for secure, passwordless access.
+In this phase, you will create **three unique ISOs** (one for each node). During this process, your host's SSH public key is automatically injected into the images for secure, passwordless access, and the Red Hat credentials are set for the automated installation.
+
+### Set your Red Hat Credentials
+
+Export your Red Hat Organization ID and Activation Key as environment variables. These will be used to build the container and configure the ISOs.
+
+```Bash
+export ORG_ID="your_org_id_here"
+export ACTIVATION_KEY="your_activation_key_here"
+```
 
 ### Build the Environment
 
+Build the container image that includes the necessary tools to generate the ISOs (e.g., `lorax`, `xorriso`).
+
 ```Bash
-sudo podman build -t centos4seapath .
+sudo podman build \
+  --build-arg ORG_ID="${ORG_ID}" \
+  --build-arg ACTIVATION_KEY="${ACTIVATION_KEY}" \
+  -t rhel4seapath -f Containerfile .
 ```
 
 ### Generate the ISO
@@ -34,19 +49,19 @@ This script creates `seapath-node1.iso`, `seapath-node2.iso`, and `seapath-node3
 ```Bash
 sudo podman run --privileged --rm \
    --security-opt label=disable \
+   -e ORG_ID="${ORG_ID}" \
+   -e ACTIVATION_KEY="${ACTIVATION_KEY}" \
    -v /dev:/dev \
    -v $(pwd):/build:Z \
    -v /home/$(whoami)/.ssh:/mnt/ssh:ro,Z \
    -w /build \
-   -it centos4seapath bash ./create_vm_isos.sh
+   -it rhel4seapath bash ./create_vm_isos.sh
 ```
 
 ----------
 
 
 ## 2. Infrastructure Setup **[VM Specific]**
-
-If you are deploying on **Physical Hardware**, ensure your management switch is configured for the `192.168.124.0/24` range and skip this section.
 
 For **Virtual Machine** environments, we provide an automation script that defines the network, creates the bridges and prepares the virtual disks:
 
@@ -56,7 +71,6 @@ For **Virtual Machine** environments, we provide an automation script that defin
 ```
 
 ----------
-
 
 ## 3. Boot the hosts with the ISO files.
 
@@ -68,18 +82,17 @@ For **Virtual Machine** environments, we provide an automation script that defin
 
 
     ```Bash
+    
     ./deploy_node.sh --cluster
     sudo virsh -c qemu:///system start seapath-node-1
     sudo virsh -c qemu:///system start seapath-node-2
     sudo virsh -c qemu:///system start seapath-node-3
     ```
+    > The `--cluster` option generates all 3 ISOs. Running `./deploy_node.sh` without parameters only generates 1 ISO.
+    
+   ### Automated Installation
 
-
-> The `--cluster` option generates all 3 ISOs. Running `./deploy_node.sh` without parameters only generates 1 ISO.
-
-##### Automated Installation
-
-- Select **"Install CentOS Stream 9"** in the boot menu.
+- Select **"Install Red Hat Enterprise Linux 9.x"** in the boot menu.
 - The installation is 100% automated via Kickstart. The system will reboot once finished.
 
     ----------
@@ -92,7 +105,7 @@ Access is secured via **SSH**. Passwords are disabled for remote login.
 1.  **Add your key to your local session:**    
     
     ```Bash
-    ssh-add ~/.ssh/your_private_key    
+    ssh-add ~/.ssh/your_private_key_42    
     ```
     
 2.  **Login to a node:**    **[VM Specific]**
@@ -109,9 +122,9 @@ If you reinstall a node, your host will detect a fingerprint mismatch. Clear the
 
 ## 5. SEAPATH Configuration (Ansible)
 
-Once nodes are online, run the SEAPATH hardening playbooks.
+Once nodes are online, run the SEAPATH playbooks.
 
-### A. Clone the Seapath Ansible repository into the root of our repository:
+### A. Clone the SEAPATH Ansible repository into the root of our repository:
 ```Bash
  git clone https://github.com/seapath/ansible.git
 ```
@@ -124,8 +137,7 @@ sudo podman run --privileged --rm \
   --security-opt label=disable \
   --mount type=bind,source=$(pwd)/ansible,target=/root/ansible/ \
   --mount type=bind,source=/home/$(whoami)/.ssh/,target=/root/.ssh/ \
-  -it centos4seapath bash
-
+  -it rhel4seapath bash
 ```
 
 ### C. Inside Container - Prepare and Execute  **[VM Specific]**
@@ -134,16 +146,16 @@ sudo podman run --privileged --rm \
 ```Bash
 cd /root/ansible/
 
-python3.9 -m pip install netaddr 
-
+# Configure Git to trust the mounted directory
 git config --global --add safe.directory /root/ansible
 
 ./prepare.sh
 
+# Start the SSH agent and add your private key for passwordless authentication
 eval $(ssh-agent -s)
-
 ssh-add /root/.ssh/your_private_key_42
 
+# Disable host key checking to prevent interactive prompts during automation
 export ANSIBLE_HOST_KEY_CHECKING=False
 ```
 
@@ -183,6 +195,7 @@ Edit the file `inventories/examples/seapath-standalone.yaml` to match the follow
 +       ansible_user: virtu
 +       ansible_ssh_private_key_file: /root/.ssh/your_private_key_42
 
+##       meritissimo1 was here
 ```
 
 > **Note:** In this virtual lab setup, `enp1s0` is the default management interface. If you are deploying on different hardware, verify the interface name using `ip addr`.
