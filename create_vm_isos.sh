@@ -4,7 +4,7 @@ set -e
 
 # --- CONFIGURATION ---
 KS_SOURCE="seapath_kickstart.ks"
-ISO_BASE="CentOS-Stream-9-latest-x86_64-dvd1.iso"
+ISO_BASE="rhel-9.7-x86_64-dvd.iso"
 INTERNAL_SSH_PATH=$(ls /mnt/ssh/*.pub 2>/dev/null | head -n1)
 
 # --- 1. ENVIRONMENT CHECK ---
@@ -39,6 +39,8 @@ for i in 1 2 3; do
   sed -i "s|__SSH_KEY_ROOT__|$SSH_CONTENT|g" "$KS_TMP"
   sed -i "s|__HOSTNAME__|node$i|g" "$KS_TMP"
   sed -i "s|__NODE_IP__|$NODE_IP|g" "$KS_TMP"
+  sed -i "s|{{ORG_ID}}|${ORG_ID}|g" "$KS_TMP"
+  sed -i "s|{{ACTIVATION_KEY}}|${ACTIVATION_KEY}|g" "$KS_TMP"
 
   echo "--- Running mkksiso for Node $i ---"
   mkksiso --ks "$KS_TMP" "$ISO_BASE" "$ISO_FINAL"
