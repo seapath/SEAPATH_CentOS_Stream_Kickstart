@@ -1,61 +1,57 @@
-# SEAPATH RHEL 9 - Automated Deployment Guide
+# SEAPATH - Automated Deployment Guide (RHEL 9 & CentOS Stream 9)
 
 This guide provides a workflow to build custom **SEAPATH ISOs** and deploy them on **Physical Servers (Bare Metal)** or **Virtual Machines (Libvirt)**.
 
-> **Note:** All scripts (`.sh`) and configuration files (`.xml`, `.ks`) mentioned in this guide are located in the root of this repository.
+> **Note:** All scripts (`.sh`, `.py`) and configuration files (`.xml`, `.ks`) mentioned in this guide are located in the root of this repository.
 
 ### Prerequisites
 
-- **RHEL 9 ISO:** Download the standard **RHEL 9 Binary DVD ISO** (e.g., `rhel-9.7-x86_64-dvd.iso`) and place it in the root of this repository.
-  - Download from: [Red Hat Customer Portal](https://access.redhat.com/downloads/content/479/ver=/rhel---9/9.7/x86_64/product-software)
+- **Python 3:** Required to run the build script.
 
-- **Red Hat Subscription:** To successfully install the packages, you must have an active Red Hat subscription. You will need your **Organization ID** and an **Activation Key**.
+- **Base ISO:** Download the standard Binary DVD ISO for your preferred OS and place it in the root of this repository.
 
-- **SSH Public Keys:** Have your public SSH keys ready to be injected into the Kickstart file for passwordless access.
+	-   **RHEL 9:** Download the standard RHEL 9 Binary DVD ISO (e.g., `rhel-9.x-x86_64-dvd.iso`) from the [Red Hat Customer Portal](https://access.redhat.com/downloads/)
+    
+	-   **CentOS Stream 9:** Download the latest DVD ISO from the [CentOS Mirrors](https://centos.org/download/#centos-stream-9)
 
-- **Optional (Passwords):** The default password for `root`, `virtu`, and `ansible` users is `toto`. To change it, edit the `.ks` file and replace the hashed passwords.
+- **Red Hat Subscription (RHEL Only):** To successfully install RHEL packages, you must have an active Red Hat subscription. You will need your **Organization ID** and an **Activation Key**.
 
+-   **SSH Public Keys:** Have your public SSH keys ready in your `~/.ssh/` directory to be automatically injected into the Kickstart file for passwordless access.
+    
+-   **Optional (Passwords):** The default password for `root`, `virtu`, and `ansible` users is `toto`. To change it, edit the `.ks` file and replace the hashed passwords.
 
 ## 1. Generating Custom ISOs
 
-In this phase, you will create **three unique ISOs** (one for each node). During this process, your host's SSH public key is automatically injected into the images for secure, passwordless access, and the Red Hat credentials are set for the automated installation.
+In this phase, you will create **three unique ISOs** (one for each node). During this process, your host's SSH public key is automatically injected into the images for secure, passwordless access. We provide a Python orchestrator that automates the container build and ISO generation.
 
-### Set your Red Hat Credentials
+### Set your Credentials (RHEL Deployments Only)
 
-Export your Red Hat Organization ID and Activation Key as environment variables. These will be used to build the container and configure the ISOs.
+If you are building RHEL 9 ISOs, export your Red Hat Organization ID and Activation Key as environment variables. The script will automatically read them.
 
 ```Bash
 export ORG_ID="your_org_id_here"
 export ACTIVATION_KEY="your_activation_key_here"
 ```
 
-### Build the Environment
+### Run the Build Orchestrator
 
-Build the container image that includes the necessary tools to generate the ISOs (e.g., `lorax`, `xorriso`).
+Execute the Python builder. It will dynamically detect your ISO, ask for your target environment, build the required container, and generate the final ISOs (`seapath-node1.iso`, `seapath-node2.iso`, `seapath-node3.iso`).
 
 ```Bash
-sudo podman build \
-  --build-arg ORG_ID="${ORG_ID}" \
-  --build-arg ACTIVATION_KEY="${ACTIVATION_KEY}" \
-  -t rhel4seapath -f Containerfile .
+./build_seapath.py
 ```
 
-### Generate the ISO
-
-This script creates `seapath-node1.iso`, `seapath-node2.iso`, and `seapath-node3.iso`.
-
-
+### Interactive Menu Example:
 
 ```Bash
-sudo podman run --privileged --rm \
-   --security-opt label=disable \
-   -e ORG_ID="${ORG_ID}" \
-   -e ACTIVATION_KEY="${ACTIVATION_KEY}" \
-   -v /dev:/dev \
-   -v $(pwd):/build:Z \
-   -v /home/$(whoami)/.ssh:/mnt/ssh:ro,Z \
-   -w /build \
-   -it rhel4seapath bash ./create_vm_isos.sh
+==================================================
+   SEAPATH ISO Builder
+==================================================
+
+Which Operating System do you want to build?
+  [1] Red Hat Enterprise Linux 9 (RHEL)
+  [2] CentOS Stream 9
+Select an option:
 ```
 
 ----------
@@ -72,7 +68,7 @@ For **Virtual Machine** environments, we provide an automation script that defin
 
 ----------
 
-## 3. Boot the hosts with the ISO files.
+## 3. Boot the hosts
 
 ### Step 1: Booting the Hosts
 
@@ -82,7 +78,6 @@ For **Virtual Machine** environments, we provide an automation script that defin
 
 
     ```Bash
-    
     ./deploy_node.sh --cluster
     sudo virsh -c qemu:///system start seapath-node-1
     sudo virsh -c qemu:///system start seapath-node-2
@@ -90,9 +85,9 @@ For **Virtual Machine** environments, we provide an automation script that defin
     ```
     > The `--cluster` option generates all 3 ISOs. Running `./deploy_node.sh` without parameters only generates 1 ISO.
     
-   ### Automated Installation
+   ### Step 2: Automated Installation
 
-- Select **"Install Red Hat Enterprise Linux 9.x"** in the boot menu.
+- Select **"Install Red Hat Enterprise Linux 9.x"** or **"Install CentOS Stream 9"** in the boot menu.
 - The installation is 100% automated via Kickstart. The system will reboot once finished.
 
     ----------
@@ -122,7 +117,7 @@ If you reinstall a node, your host will detect a fingerprint mismatch. Clear the
 
 ## 5. SEAPATH Configuration (Ansible)
 
-Once nodes are online, run the SEAPATH playbooks.
+Once nodes are online, run the SEAPATH playbooks to configure the system.
 
 ### A. Clone the SEAPATH Ansible repository into the root of our repository:
 ```Bash
@@ -130,14 +125,16 @@ Once nodes are online, run the SEAPATH playbooks.
 ```
 
 ### B. Run the Container with Host Networking  **[VM Specific]**
+Use the container image generated by the Python script in Step 1. Depending on your choice, the image tag will be `rhel4seapath` or `centos4seapath`.
 
 ```Bash
+# Replace <os_type> with 'rhel' or 'centos'
 sudo podman run --privileged --rm \
   --net=host \
   --security-opt label=disable \
   --mount type=bind,source=$(pwd)/ansible,target=/root/ansible/ \
   --mount type=bind,source=/home/$(whoami)/.ssh/,target=/root/.ssh/ \
-  -it rhel4seapath bash
+  -it <os_type>4seapath bash
 ```
 
 ### C. Inside Container - Prepare and Execute  **[VM Specific]**
@@ -195,7 +192,7 @@ Edit the file `inventories/examples/seapath-standalone.yaml` to match the follow
 +       ansible_user: virtu
 +       ansible_ssh_private_key_file: /root/.ssh/your_private_key_42
 
-##       meritissimo1 was here
+##       meritissimo1 was here :D
 ```
 
 > **Note:** In this virtual lab setup, `enp1s0` is the default management interface. If you are deploying on different hardware, verify the interface name using `ip addr`.
