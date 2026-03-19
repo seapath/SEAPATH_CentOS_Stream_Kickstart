@@ -1,12 +1,21 @@
-FROM registry.access.redhat.com/ubi9/ubi:latest
+ARG BASE_IMAGE="quay.io/centos/centos:stream9"
+FROM ${BASE_IMAGE}
 
-ARG ORG_ID
-ARG ACTIVATION_KEY
+ARG OS_TYPE="centos"
 
-RUN subscription-manager register --org=${ORG_ID} --activationkey=${ACTIVATION_KEY} && \
-    subscription-manager repos --enable=rhel-9-for-x86_64-appstream-rpms && \
-    dnf install -y gcc python3.11 python3.11-pip git rsync vim lorax xorriso python3-netaddr && \
-    subscription-manager unregister && \
+RUN --mount=type=secret,id=org_id --mount=type=secret,id=act_key \
+    if [ "$OS_TYPE" = "rhel" ]; then \
+        ORG_ID=$(cat /run/secrets/org_id) && \
+        ACTIVATION_KEY=$(cat /run/secrets/act_key) && \
+        subscription-manager register --org=${ORG_ID} --activationkey=${ACTIVATION_KEY} && \
+        subscription-manager repos --enable=rhel-9-for-x86_64-appstream-rpms; \
+    else \
+        dnf -y update; \
+    fi && \
+    dnf install -y gcc python3.11 python3.11-pip git rsync vim iputils lorax xorriso python3-netaddr && \
+    if [ "$OS_TYPE" = "rhel" ]; then \
+        subscription-manager unregister; \
+    fi && \
     dnf clean all
 
 RUN python3.11 -m pip install --upgrade pip && \
