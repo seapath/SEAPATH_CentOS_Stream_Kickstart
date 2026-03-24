@@ -5,7 +5,7 @@
 set -e
 
 CURRENT_DIR="/var/lib/libvirt/images"
-TEMPLATE="virtualized_node_example.xml"
+TEMPLATE="templates/virtualized_node_example.xml"
 
 # 1. Validate if the template file exists before starting
 if [[ ! -f "$TEMPLATE" ]]; then
@@ -40,6 +40,14 @@ for i in $(seq 1 $NUM_NODES); do
     continue
   fi
 
+  # Copy the generated ISO to the libvirt directory
+  if [[ -f "isos/seapath-node$i.iso" ]]; then
+    echo "Copying ISO to libvirt storage..."
+    sudo cp "isos/seapath-node$i.iso" "$CURRENT_DIR/"
+  else
+    echo "WARNING: ISO 'isos/seapath-node$i.iso' not found. VM may fail to boot."
+  fi
+
   # Copy template
   cp "$TEMPLATE" "$XML_FINAL"
 
@@ -59,16 +67,18 @@ for i in $(seq 1 $NUM_NODES); do
   sed -i "s|seapath-node-os.qcow2|seapath-node$i-os.qcow2|g" "$XML_FINAL"
   sed -i "s|seapath-node-ceph.qcow2|seapath-node$i-ceph.qcow2|g" "$XML_FINAL"
 
-  # Define the VM in Libvirt (System Scope)
+  # Define the VM in Libvirt
   echo "Defining VM in libvirt..."
   sudo virsh -c qemu:///system define "$XML_FINAL"
+
+  # Clean up the temporary XML file to keep the directory clean
+  rm -f "$XML_FINAL"
 
   echo "Success: $NODE_NAME defined."
 done
 
-echo "------------------------------------------------"
+echo "--------------------------------------------------"
 echo "--- Deployment configuration finished ---"
 echo "Next steps:"
-echo "1. Verify your disks and ISOs are in $CURRENT_DIR"
-echo "2. Start your nodes: sudo virsh -c qemu:///system start seapath-node-X"
-echo "------------------------------------------------"
+echo "Start your nodes: sudo virsh -c qemu:///system start seapath-node-X"
+echo "--------------------------------------------------"

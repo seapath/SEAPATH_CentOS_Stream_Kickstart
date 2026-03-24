@@ -11,9 +11,26 @@ timezone America/New_York --utc
 # System bootloader configuration
 bootloader --append="quiet crashkernel=1G-4G:192M,4G-64G:256M,64G-:512M  console=ttyS0,115200 console=tty0 efi=runtime ipv6.disable=1"
 
-# --- DYNAMISM: Including configurations generated at boot ---
-%include /tmp/disk-config
-%include /tmp/network-config
+# --- NETWORK CONFIGURATION ---
+network --device=__INTERFACE__ --bootproto=static --ip=__NODE_IP__ --netmask=255.255.255.0 --gateway=192.168.124.1 --nameserver=8.8.8.8 --hostname=__HOSTNAME__ --activate --onboot=on
+
+# --- DISK CONFIGURATION ---
+ignoredisk --only-use=__TARGET_DISK__
+zerombr
+clearpart --all --initlabel
+
+part /boot/efi --fstype=efi --ondisk=__TARGET_DISK__ --size=512 --asprimary
+part /boot --fstype=xfs --ondisk=__TARGET_DISK__ --size=1024 --asprimary
+
+part pv.0 --fstype=lvmpv --ondisk=__TARGET_DISK__ --size=1000 --grow
+volgroup vg1 --pesize=4096 pv.0
+logvol / --vgname=vg1 --name=vg1-root --fstype=ext4 --size=8000 --grow
+logvol /var --vgname=vg1 --name=vg1-var --fstype=ext4 --size=4096
+logvol /var/log --vgname=vg1 --name=vg1-varlog --fstype=ext4 --size=2000
+logvol /var/log/audit --vgname=vg1 --name=vg1-varlogaudit --fstype=ext4 --size=1024
+logvol /home --vgname=vg1 --name=vg1-home --fstype=ext4 --size=1024
+logvol /srv --vgname=vg1 --name=vg1-srv --fstype=ext4 --size=512
+logvol swap --vgname=vg1 --name=vg1-swap --fstype=swap --size=500
 
 # Do not configure the X Window System
 skipx
@@ -39,35 +56,6 @@ __REPOS__
 __PACKAGES__
 %end
 
-%pre
-# 1. DISK DISCOVERY
-TARGET_DISK=$(lsblk -dno NAME,TYPE | grep disk | head -n1 | awk '{print $1}')
-
-cat <<EOF > /tmp/disk-config
-ignoredisk --only-use=/dev/$TARGET_DISK
-zerombr
-clearpart --all --initlabel
-
-part /boot/efi --fstype=efi --ondisk=/dev/$TARGET_DISK --size=512 --asprimary
-part /boot --fstype=xfs --ondisk=/dev/$TARGET_DISK --size=1024 --asprimary
-
-part pv.0 --fstype=lvmpv --ondisk=/dev/$TARGET_DISK --size=1000 --grow
-volgroup vg1 --pesize=4096 pv.0
-logvol / --vgname=vg1 --name=vg1-root --fstype=ext4 --size=8000 --grow
-logvol /var --vgname=vg1 --name=vg1-var --fstype=ext4 --size=4096
-logvol /var/log --vgname=vg1 --name=vg1-varlog --fstype=ext4 --size=2000
-logvol /var/log/audit --vgname=vg1 --name=vg1-varlogaudit --fstype=ext4 --size=1024
-logvol /home --vgname=vg1 --name=vg1-home --fstype=ext4 --size=1024
-logvol /srv --vgname=vg1 --name=vg1-srv --fstype=ext4 --size=512
-logvol swap --vgname=vg1 --name=vg1-swap --fstype=swap --size=500
-EOF
-
-# 2. NETWORK CONFIGURATION
-INTERFACE=$(ls /sys/class/net | grep -v lo | head -n1)
-
-echo "network --device=$INTERFACE --bootproto=static --ip=__NODE_IP__ --netmask=255.255.255.0 --gateway=192.168.124.1 --nameserver=8.8.8.8 --hostname=__HOSTNAME__ --activate --onboot=on" > /tmp/network-config
-%end
-
 %post
 exec > /root/anaconda-post.log 2>&1
 
@@ -83,7 +71,6 @@ EOF
 
 cat <<EOF > /tmp/Docker_gpg
 -----BEGIN PGP PUBLIC KEY BLOCK-----
-
 mQINBFit5IEBEADDt86QpYKz5flnCsOyZ/fk3WwBKxfDjwHf/GIflo+4GWAXS7wJ
 1PSzPsvSDATV10J44i5WQzh99q+lZvFCVRFiNhRmlmcXG+rk1QmDh3fsCCj9Q/yP
 w8jn3Hx0zDtz8PIB/18ReftYJzUo34COLiHn8WiY20uGCF2pjdPgfxE+K454c4G7
@@ -118,10 +105,10 @@ echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
 rpm -import /tmp/Docker_gpg
 
 echo "Defaults:ansible !requiretty" >> /etc/sudoers
-echo "ansible    ALL=NOPASSWD:EXEC:SETENV: /bin/sh" >> /etc/sudoers
-echo "ansible    ALL=NOPASSWD: /usr/bin/rsync" >> /etc/sudoers
-echo "ansible    ALL=NOPASSWD: /usr/local/bin/crm" >> /etc/sudoers
-echo "ansible    ALL=NOPASSWD: /usr/bin/ceph" >> /etc/sudoers
+echo "ansible   ALL=NOPASSWD:EXEC:SETENV: /bin/sh" >> /etc/sudoers
+echo "ansible   ALL=NOPASSWD: /usr/bin/rsync" >> /etc/sudoers
+echo "ansible   ALL=NOPASSWD: /usr/local/bin/crm" >> /etc/sudoers
+echo "ansible   ALL=NOPASSWD: /usr/bin/ceph" >> /etc/sudoers
 echo "virtu   ALL=NOPASSWD: ALL" >> /etc/sudoers
 
 cat <<EOF > /etc/profile.d/custom-path.sh

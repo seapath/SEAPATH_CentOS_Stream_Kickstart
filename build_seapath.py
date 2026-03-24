@@ -10,6 +10,16 @@ def print_banner():
     print("   SEAPATH ISO Builder")
     print("="*42)
 
+def ask_yes_no(prompt):
+    """Asks a yes/no question and strictly validates the input."""
+    while True:
+        choice = input(prompt).strip().lower()
+        if choice in ['y', 'yes']:
+            return True
+        if choice in ['n', 'no', '']:
+            return False
+        print("Invalid input. Please type 'y' or 'n' (or press Enter for 'n').")
+
 def ask_choice(prompt, options):
     """It display a simple interactive menu and returns the user's choice."""
     while True:
@@ -35,7 +45,7 @@ def find_iso(os_type):
             if fnmatch.fnmatch(iso_lower, 'rhel-9*.iso') and not fnmatch.fnmatch(iso_lower, '*boot*.iso'):
                 matching_isos.append(iso)
         elif os_type == 'centos':
-            # Search for centos, stream e 9
+            # Search for centos, stream and 9
             if fnmatch.fnmatch(iso_lower, '*centos*stream*9*.iso') or fnmatch.fnmatch(iso_lower, 'c9s*.iso'):
                 matching_isos.append(iso)
 
@@ -58,6 +68,16 @@ def find_iso(os_type):
     choice = ask_choice("Which ISO do you want to use?", options)
     return options[choice]
 
+def get_ssh_key():
+    """Reads the user's public SSH key from the host machine."""
+    ssh_dir = os.path.expanduser("~/.ssh")
+    if os.path.exists(ssh_dir):
+        for f in os.listdir(ssh_dir):
+            if f.endswith(".pub"):
+                with open(os.path.join(ssh_dir, f), 'r') as key_file:
+                    return key_file.read().strip()
+    return ""
+
 def validate_environment(config):
     """Validates RHSM credentials and seeks ISO certification."""
     print("\n[+] Validating environment...")
@@ -77,6 +97,12 @@ def validate_environment(config):
     iso_name = find_iso(config['os'])
     print(f"  -> Found and selected ISO: {iso_name}")
 
+    config['ssh_key'] = get_ssh_key()
+    if config['ssh_key']:
+         print("  -> SSH Public Key found.")
+    else:
+         print("  -> WARNING: No SSH Public Key found in ~/.ssh/*.pub. Key injection will be empty.")
+
     print("[+] Environment is valid!")
     return iso_name
 
@@ -88,7 +114,6 @@ def execute_build(config):
 
     container_tag = f"{config['os']}4seapath"
 
-    # Build the container
     print(f"\n[*] Building container image '{container_tag}'...")
 
     if config['os'] == 'rhel':
@@ -109,7 +134,7 @@ def execute_build(config):
             "--build-arg", "BASE_IMAGE=quay.io/centos/centos:stream9"
         ]
 
-    build_cmd.extend(["-f", "Containerfile", "."])
+    build_cmd.extend(["-f", "container/Containerfile", "."])
 
     try:
         subprocess.run(build_cmd, check=True)
@@ -125,11 +150,13 @@ def execute_build(config):
         "--security-opt", "label=disable",
         "-v", "/dev:/dev",
         "-v", f"{os.getcwd()}:/build:Z",
-        "-v", f"{os.path.expanduser('~/.ssh')}:/mnt/ssh:ro,Z",
         "-w", "/build",
         "-e", f"BASE_ISO={config['iso_file']}",
         "-e", f"DEPLOY_ENV={config['env']}",
-        "-e", f"OS_TYPE={config['os']}"
+        "-e", f"OS_TYPE={config['os']}",
+        "-e", f"TARGET_DISK={config['disk']}",
+        "-e", f"INTERFACE={config['net_iface']}",
+        "-e", f"SSH_PUB_KEY={config['ssh_key']}"
     ]
 
     if config['os'] == 'rhel':
@@ -138,8 +165,7 @@ def execute_build(config):
             "-e", f"ACTIVATION_KEY={config['act_key']}"
         ])
 
-    # Calls the original Bash script inside the container
-    run_cmd.extend(["-it", container_tag, "bash", "./create_vm_isos.sh"])
+    run_cmd.extend(["-it", container_tag, "bash", "scripts/create_vm_isos.sh"])
 
     try:
         subprocess.run(run_cmd, check=True)
@@ -147,6 +173,36 @@ def execute_build(config):
     except subprocess.CalledProcessError as e:
         print(f"\n[-] ERROR: ISO generation script failed inside the container. (Exit code: {e.returncode})")
         print(f"    Command: {' '.join(e.cmd)}")
+        sys.exit(1)
+
+def deploy_infrastructure(config):
+    """Handles Phase 3: Libvirt Network and VM Deployment."""
+    if config['env'] != 'vm':
+        return
+
+    print("\n" + "="*42)
+    print("[+] PHASE 3: Virtual Machine Infrastructure")
+    print("="*42)
+    
+    try:
+        if ask_yes_no("\nDo you want to configure the Libvirt Network (Host Bridges)? [y/N]: "):
+            print("[*] Running network preparation...")
+            subprocess.run(["bash", "scripts/prepare_vm_host.sh"], check=True)
+        
+        if ask_yes_no("\nDo you want to deploy the VMs (Libvirt Domains)? [y/N]: "):
+            cluster_flag = "--cluster" if ask_yes_no("Deploy as a 3-Node Cluster? [y/N]: ") else ""
+            
+            print("[*] Running VM deployment...")
+            deploy_cmd = ["bash", "scripts/deploy_node.sh"]
+            if cluster_flag:
+                deploy_cmd.append(cluster_flag)
+                
+            subprocess.run(deploy_cmd, check=True)
+            
+        print("\n[+] Infrastructure phase completed!")
+        
+    except subprocess.CalledProcessError as e:
+        print(f"\n[-] ERROR: Infrastructure deployment failed. (Exit code: {e.returncode})")
         sys.exit(1)
 
 def main():
@@ -166,14 +222,39 @@ def main():
     )
     config['env'] = 'vm' if deploy_choice == "1" else 'baremetal'
 
+    # Dynamic Disk and Interface configuration
+    default_disk = "sda"
+    user_disk = input(f"\nEnter the target installation disk [{default_disk}]: ").strip()
+    config['disk'] = user_disk if user_disk else default_disk
+
+    default_iface = "enp1s0" if config['env'] == "vm" else "eno1"
+    user_iface = input(f"Enter the primary network interface [{default_iface}]: ").strip()
+    config['net_iface'] = user_iface if user_iface else default_iface
+
     config['iso_file'] = validate_environment(config)
 
     print("\n[+] Ready to build!")
     print(f"    OS: {config['os'].upper()}")
     print(f"    Target: {config['env'].upper()}")
     print(f"    Base ISO: {config['iso_file']}")
+    print(f"    Installation Disk: /dev/{config['disk']}")
+    print(f"    Network Interface: {config['net_iface']}")
 
-    execute_build(config)
+    should_build = True
+    if os.path.exists("isos"):
+        existing_isos = [f for f in os.listdir("isos") if f.startswith("seapath-node") and f.endswith(".iso")]
+        if existing_isos:
+            print("\n[!] Existing generated ISOs found in 'isos/' directory:")
+            for f in sorted(existing_isos):
+                print(f"    - isos/{f}")
+            should_build = ask_yes_no("\nDo you want to rebuild and overwrite these ISOs? [y/N]: ")
+
+    if should_build:
+        execute_build(config)
+    else:
+        print("\n[*] Skipping ISO generation phase. Using existing ISOs.")
+
+    deploy_infrastructure(config)
 
 if __name__ == "__main__":
     try:
