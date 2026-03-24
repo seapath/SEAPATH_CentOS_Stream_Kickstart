@@ -22,8 +22,14 @@ for b in br0 br1 br2; do
   sudo ip link delete $b 2>/dev/null || true
 done
 
-# 4. Delete Storage Files (The fix for the sudo rm problem)
-echo "Deleting storage files and ISOs..."
+# 4. Delete Storage Files
+echo "Deleting storage files from libvirt images..."
 sudo bash -c "rm -f /var/lib/libvirt/images/seapath*"
+
+# 5. Delete locally generated ISOs
+if [ -d "isos" ]; then
+  echo "Deleting locally generated ISOs from 'isos' directory..."
+  sudo rm -rf isos/
+fi
 
 echo "Cleanup complete!"

@@ -1,11 +1,9 @@
 #!/usr/bin/bash
 set -e
 
-KS_SOURCE="seapath_kickstart.ks"
+KS_SOURCE="templates/seapath_kickstart.ks"
 ISO_BASE="${BASE_ISO:-CentOS-Stream-9-latest-x86_64-dvd1.iso}"
 OS_TYPE="${OS_TYPE:-centos}"
-INTERNAL_SSH_PATH=$(ls /mnt/ssh/*.pub 2>/dev/null | head -n1)
-SSH_CONTENT=$(cat "$INTERNAL_SSH_PATH" 2>/dev/null || echo "")
 
 # Ensures temporary files are deleted even if the script fails or is interrupted
 cleanup() {
@@ -18,8 +16,8 @@ if [ ! -f "$KS_SOURCE" ]; then
   exit 1
 fi
 
-if [ -z "$SSH_CONTENT" ]; then
-  echo "WARNING: No SSH public key found in /mnt/ssh/. Key injection will be empty."
+if [ -z "$SSH_PUB_KEY" ]; then
+  echo "WARNING: No SSH public key variable found. Key injection will be empty."
 fi
 
 if [ "$OS_TYPE" = "rhel" ]; then
@@ -29,16 +27,25 @@ if [ "$OS_TYPE" = "rhel" ]; then
   fi
 fi
 
+# Fallbacks for safety in case they are not exported
+TARGET_DISK="${TARGET_DISK:-sda}"
+INTERFACE="${INTERFACE:-enp1s0}"
+
 for i in 1 2 3; do
   echo "--- Preparing ISO for Node $i ---"
   KS_TMP="tmp_node$i.ks"
   cp "$KS_SOURCE" "$KS_TMP"
 
-  sed -i "s|__SSH_KEY_VIRTU__|$SSH_CONTENT|g" "$KS_TMP"
-  sed -i "s|__SSH_KEY_ANSIBLE__|$SSH_CONTENT|g" "$KS_TMP"
-  sed -i "s|__SSH_KEY_ROOT__|$SSH_CONTENT|g" "$KS_TMP"
+  # Core Network & Disk Dynamism
+  sed -i "s|__TARGET_DISK__|$TARGET_DISK|g" "$KS_TMP"
+  sed -i "s|__INTERFACE__|$INTERFACE|g" "$KS_TMP"
   sed -i "s|__HOSTNAME__|node$i|g" "$KS_TMP"
   sed -i "s|__NODE_IP__|192.168.124.$((i + 1))|g" "$KS_TMP"
+
+  # SSH Key Injection
+  sed -i "s|__SSH_KEY_VIRTU__|$SSH_PUB_KEY|g" "$KS_TMP"
+  sed -i "s|__SSH_KEY_ANSIBLE__|$SSH_PUB_KEY|g" "$KS_TMP"
+  sed -i "s|__SSH_KEY_ROOT__|$SSH_PUB_KEY|g" "$KS_TMP"
 
   if [ "$OS_TYPE" = "rhel" ]; then
 
@@ -234,5 +241,12 @@ EOF
   sed -i '/__OS_POST__/r post.txt' "$KS_TMP"
   sed -i '/__OS_POST__/d' "$KS_TMP"
 
-  mkksiso --ks "$KS_TMP" "$ISO_BASE" "seapath-node$i.iso"
+  mkdir -p isos
+  rm -f "isos/seapath-node$i.iso"
+
+  mkksiso --ks "$KS_TMP" "$ISO_BASE" "isos/seapath-node$i.iso"
 done
+
+echo "--------------------------------------------------"
+echo "SUCCESS: All SEAPATH ISOs were generated and saved in the 'isos/' directory."
+echo "--------------------------------------------------"

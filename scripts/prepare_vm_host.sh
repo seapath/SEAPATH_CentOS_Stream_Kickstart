@@ -5,19 +5,19 @@ set -e
 DEST_DIR="/var/lib/libvirt/images"
 
 echo "--- 1. Setting up Management Network ---"
-if [ -f "seapath-network.xml" ]; then
-  sudo virsh -c qemu:///system net-define seapath-network.xml || true
+if [ -f "templates/seapath-network.xml" ]; then
+  sudo virsh -c qemu:///system net-define templates/seapath-network.xml || true
   sudo virsh -c qemu:///system net-start seapath-default || true
   sudo virsh -c qemu:///system net-autostart seapath-default || true
 else
-  echo "ERROR: seapath-network.xml not found in current directory."
+  echo "ERROR: templates/seapath-network.xml not found."
   exit 1
 fi
 
 echo "--- 2. Setting up Cluster Bridges ---"
 for i in 0 1 2; do
   echo "Creating bridge br$i..."
-  sudo ip link add br$i type bridge || true
+  sudo ip link add br$i type bridge 2>/dev/null || true
   sudo ip link set br$i up
   sudo ip link set dev br$i mtu 9000
 
@@ -34,13 +34,8 @@ EOF
   rm "tmp-bridge-$i.xml"
 done
 
-echo "--- 3. Preparing Storage and ISOs ---"
-# Move the 3 ISOs to the libvirt folder
+echo "--- 3. Preparing Storage ---"
 for i in 1 2 3; do
-  if [ -f "seapath-node$i.iso" ]; then
-    sudo mv "seapath-node$i.iso" "$DEST_DIR/"
-  fi
-
   echo "Creating virtual disks for Node $i..."
   sudo qemu-img create -f qcow2 "$DEST_DIR/seapath-node$i-os.qcow2" 100G
   sudo qemu-img create -f qcow2 "$DEST_DIR/seapath-node$i-ceph.qcow2" 50G
