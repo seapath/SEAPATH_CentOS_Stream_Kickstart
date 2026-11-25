@@ -1,4 +1,6 @@
 #!/usr/bin/bash
+# Copyright (C) 2026 Red Hat, Inc.
+# SPDX-License-Identifier: Apache-2.0
 # [VM Specific] - Setup Network and Storage for SEAPATH Lab
 set -e
 
